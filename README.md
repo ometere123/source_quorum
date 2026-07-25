@@ -328,6 +328,26 @@ syndicated story. The adjudicator's own reasoning:
 
 All three domains moved 5000 → 5250 bps in the reputation ledger.
 
+**Refusing to answer when it has the answer.**
+
+The property worth testing hardest is abstention. Question: *"Which club won the 2025-26 English Premier League title?"* over three sources, two of which are dead domains.
+
+```json
+{"status_name": "UNAVAILABLE", "answer": "", "confidence": 0,
+ "independent_clusters": 0,
+ "reasoning": "only 1 distinct domains were reachable, below min_independent=2"}
+```
+
+| domain | reachable | stance | claim |
+|---|---|---|---|
+| `this-domain-does-not-exist-91af.example` | false | UNCLEAR | — |
+| `wikipedia.org` | **true** | **SUPPORTS** | **Arsenal** |
+| `nonexistent-sports-site-7731.test` | false | UNCLEAR | — |
+
+**Wikipedia answered the question — and the contract discarded it.** One reachable domain is not corroboration, so the verdict is `UNAVAILABLE` with an empty answer rather than a confident "Arsenal" backed by a single page. This is the whole design in one transaction: an oracle that must produce a value would have returned Arsenal here.
+
+Note also what did *not* happen. Round 2 never ran: the deterministic reachability floor short-circuited before adjudication, so a doomed query costs one consensus round rather than two. The two dead domains each took the −100 bps unreachable penalty (5000 → 4900), while `wikipedia.org` was neither rewarded nor punished — an inconclusive query moves nothing.
+
 **A second question, on stable reference pages.**
 
 Question: *"Is the example.com domain reserved for use in documentation and examples without needing permission?"*
