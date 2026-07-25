@@ -295,9 +295,40 @@ Lint clean. **30 direct tests pass. 2 integration tests pass against real Studio
 | Studio | https://studio.genlayer.com/?import-contract=0xc9fCE280384A1B3D2CE03d2CB6f6344d36e205A2 |
 | Explorer | https://explorer-studio.genlayer.com/address/0xc9fCE280384A1B3D2CE03d2CB6f6344d36e205A2 |
 
-All 3 write methods have been executed against this deployment, so the explorer shows the complete surface: `open_query` ×2, `resolve`, `cancel_query`.
+All 3 write methods have been executed against this deployment, so the explorer shows the complete surface: `open_query` ×3, `resolve` ×2, `cancel_query`.
 
 ### Measured on live consensus
+
+**A real-world fact, three independently-owned sources.**
+
+Question: *"Which national team won the 2026 FIFA World Cup?"*
+Sources: `en.wikipedia.org`, `bbc.com`, `apnews.com`.
+
+```json
+{"status_name": "RESOLVED", "answer": "Spain",
+ "independent_clusters": 3, "confidence": 2}
+```
+
+Per-source findings, with excerpts the validators pulled from the live pages:
+
+| domain | stance | claim | cluster | excerpt |
+|---|---|---|---|---|
+| `wikipedia.org` | SUPPORTS | Spain | 0 | "…concluded on July 19 with Spain winning the championship for the second time." |
+| `bbc.com` | SUPPORTS | Spain | 1 | "'A date with history and we got there first' - Spain react to World Cup win." |
+| `apnews.com` | SUPPORTS | Spain | 2 | "Spain wins the World Cup by beating Argentina 1-0 on Ferran Torres' goal in extra time" |
+
+Note what the clustering got right: three *materially different* reports of the
+same event — an encyclopedia summary, a reaction piece and a match report —
+were correctly held to be three independent clusters rather than one
+syndicated story. The adjudicator's own reasoning:
+
+> "Wikipedia, BBC, and AP News are separate publishers and there is no
+> indication here that the BBC and AP items are reprints of the same wire copy
+> or that either merely reproduces the other."
+
+All three domains moved 5000 → 5250 bps in the reputation ledger.
+
+**A second question, on stable reference pages.**
 
 Question: *"Is the example.com domain reserved for use in documentation and examples without needing permission?"*
 Sources: `example.com` and `iana.org` — two distinct owners.
