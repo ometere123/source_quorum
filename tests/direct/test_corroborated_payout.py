@@ -41,6 +41,37 @@ def test_settle_requires_arming(
         payout.settle()
 
 
+def test_only_the_payer_can_fund(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
+):
+    """The funding path must be executed by a test, not merely present.
+
+    The original version of this example never called the value-handling code
+    from any test. It carried a `TypeError` -- `emit_transfer` is keyword-only
+    -- and a call to `gl.get_contract_at` on an EOA, which needs the EVM
+    interface instead. Lint does not check call signatures, so nothing caught
+    it until the payout branch was actually exercised.
+    """
+    direct_vm.sender = direct_alice
+    payout = deploy_payout(direct_deploy, direct_bob, direct_charlie)
+
+    direct_vm.value = 1_000_000_000_000_000_000  # 1 GEN, in wei
+    with direct_vm.prank(direct_charlie):
+        with direct_vm.expect_revert("not the payer"):
+            payout.fund()
+
+
+def test_funding_zero_is_refused(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
+):
+    direct_vm.sender = direct_alice
+    payout = deploy_payout(direct_deploy, direct_bob, direct_charlie)
+
+    direct_vm.value = 0
+    with direct_vm.expect_revert("non-zero"):
+        payout.fund()
+
+
 def test_initial_outcome_is_empty(
     direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
 ):

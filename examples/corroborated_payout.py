@@ -60,6 +60,22 @@ class ISourceQuorum:
         ) -> u256: ...
 
 
+@gl.evm.contract_interface
+class _Payee:
+    """Recipient of the escrow.
+
+    An EOA lives on the chain layer, so paying one is an *external* message and
+    must go through an EVM interface -- `gl.get_contract_at` is for Intelligent
+    Contracts only. External messages always execute on finalisation.
+    """
+
+    class View:
+        pass
+
+    class Write:
+        pass
+
+
 @allow_storage
 @dataclass
 class Outcome:
@@ -92,6 +108,30 @@ class CorroboratedPayout(gl.Contract):
         self.payer = gl.message.sender_address
         self.query_id = u256(0)
         self.armed = False
+
+    @gl.public.write.payable
+    def fund(self) -> None:
+        """Deposit the escrowed amount. Payer only, before arming.
+
+        `gl.message.value` is only readable inside a payable method, and a
+        contract with no payable entry point can never hold a balance -- so an
+        escrow example without this is a story, not an escrow.
+        """
+        if gl.message.sender_address != self.payer:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: caller is not the payer")
+        if gl.message.value == u256(0):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: send a non-zero amount")
+        if bool(self.outcome.settled):
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: already settled")
+
+    # There is deliberately no __receive__ here. The SDK documents
+    # `@gl.public.write.payable def __receive__(self)` for accepting a bare
+    # value transfer with no method named, but genvm-linter 0.2.18 rejects it
+    # outright -- "public method names should not start with `__`" -- and lint
+    # is a hard gate. The consequence is that a plain transfer to this contract
+    # errors: funding must go through fund(). That is arguably the safer
+    # behaviour for an escrow anyway, since an accidental transfer bounces
+    # instead of silently joining the pot.
 
     @gl.public.write
     def arm(self, query_id: u256) -> None:
@@ -153,14 +193,24 @@ class CorroboratedPayout(gl.Contract):
         # reads "we could not tell" as "it did not happen".
         paid = conclusive and confidence >= MIN_CONFIDENCE
 
+        # State is written BEFORE any value leaves, so a re-entrant or
+        # duplicated call finds `settled` already true and stops.
         self.outcome.settled = True
         self.outcome.paid = paid
         self.outcome.status = u8(status)
         self.outcome.clusters = u32(int(verdict["independent_clusters"]))
         self.outcome.answer = str(verdict["answer"])
 
-        if paid:
-            gl.get_contract_at(self.payee).emit_transfer(self.balance)
+        # Where the funds rest in each terminal state:
+        #   corroborated + confident -> payee
+        #   anything else            -> back to the payer, never stranded
+        amount = self.balance
+        if amount > u256(0):
+            recipient = self.payee if paid else self.payer
+            # Keyword-only, and on='finalized' -- an external message cannot be
+            # emitted on acceptance, and value that moves on an appealable
+            # result cannot be recalled.
+            _Payee(recipient).emit_transfer(value=amount)
 
         PayoutSettled(paid, u8(status), clusters=int(self.outcome.clusters)).emit()
 
