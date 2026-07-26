@@ -51,6 +51,29 @@ Delete GenLayer and see what survives:
 
 The property only GenLayer provides: **N independent validators each fetch every source themselves and each form their own reading, and the transaction only lands if their readings agree in substance.** No node is privileged, no party authors the answer, and disagreement is visible rather than silently resolved by whoever was asked.
 
+Note what that buys beyond "the fetch happened". A single reader — human or model — has no way to distinguish *"this page says X"* from *"I read this page as saying X"*. Corroboration across independent readers is what collapses that gap, and the equivalence principle is what forces the readers to be independent rather than one reader repeated.
+
+### Why the reputation ledger must be on-chain
+
+This is the part of the design that is hardest to build anywhere else, and it is worth separating from the resolution logic.
+
+`SourceQuorum` accumulates a track record for every registrable domain it has ever consulted. That ledger has four properties at once:
+
+1. **Nobody curates it.** There is no admin method, no allowlist, no owner. Scores move only as a mechanical consequence of past query outcomes.
+2. **Nobody can edit it.** Not the contract deployer, not a query asker, not a source.
+3. **Everybody shares it.** A query opened by one contract improves the ledger for every other contract using the same deployment.
+4. **It is auditable back to its inputs.** Every score movement traces to a specific resolved query with its findings still stored.
+
+Off-chain, you can have at most three of those. The moment a ledger has an operator, "nobody can edit it" becomes "we promise not to", and a source-reputation list with an owner is a censorship surface — whoever holds the pen decides which publishers count.
+
+This is also what makes the contract *infrastructure* rather than a library. A library is equally useful to its first and thousandth user. **This gets more useful the more the ecosystem uses it**, because the ledger deepens. That network effect only exists if the state is shared and trustless, which is a blockchain-shaped requirement, not an application one.
+
+### The test that matters
+
+The honest check on whether consensus is decorative: **does the output move money?**
+
+In [`examples/corroborated_payout.py`](examples/corroborated_payout.py) an escrow releases on `conclusive == true`. If a single party could author that verdict — pick the sources, read them, decide what counts as agreement — the escrow is worth nothing. The consensus is not garnish on an LLM call; it is the only reason the escrow is safe to enter.
+
 ### Why it is not the patterns that get rejected
 
 | Anti-pattern | Why this is not that |
@@ -83,6 +106,31 @@ Every operation that decides an outcome:
 - **All sanitisation.** Stance normalisation, confidence clamping, JSON recovery, keying findings back onto the requested URL list.
 
 The shape to notice: **the model is asked what sources say and which are independent — never what the contract should do.**
+
+### Why the two rounds are separate
+
+Fetching-and-reading and clustering-and-ruling could have been one prompt. Splitting them is deliberate:
+
+- **Independent readings must not contaminate each other.** Round 1's prompt explicitly forbids letting one source's content influence how another is read. If the same call also decided the verdict, the model would be reading each source already knowing what answer it was building toward — which is exactly the bias corroboration exists to remove.
+- **The two rounds need different equivalence principles.** Round 1's asks whether validators agree on *what each source says*. Round 2's asks whether they agree on *the verdict and the independence structure*. Collapsing them would force one principle to do both jobs badly.
+- **A deterministic gate sits between them.** The reachability floor runs on round 1's output. When too few distinct domains answered, round 2 never executes — a doomed query costs one consensus round instead of two. This is measurable: the Premier League query below short-circuits exactly here.
+
+### Ordering discipline
+
+Every deterministic guard runs before the expensive work, and the expensive work is bracketed by deterministic checks on both sides:
+
+```
+open_query   all validation, ownership grouping, quorum pre-check   ← no consensus at all
+   ▼
+resolve      guard: exists, still pending                          ← deterministic
+             ROUND 1                                               ← consensus
+             gate: reachable distinct domains >= min_independent   ← deterministic
+             ROUND 2                                               ← consensus
+             re-check: independent clusters >= min_independent      ← deterministic
+             reputation ledger update                              ← deterministic
+```
+
+A caller who supplies an impossible source list never reaches a consensus round at all — `open_query` refuses it. A query whose sources are unreachable pays for one round, not two. And a model that returns `RESOLVED` off too few clusters is overruled *after* it has spoken.
 
 ---
 
@@ -190,17 +238,62 @@ What a consumer never has to learn: how to write an equivalence principle for a 
 | **Binding before answering** | The question and its sources are fixed at `open_query`, before anyone knows the answer. A payer who could pick sources afterwards would pick the ones that suit them. |
 | **Safe default** | `conclusive` is the single flag to branch on, and it is false for every non-resolution. |
 
+### The integration surface, in full
+
+There is no SDK to learn. A consuming contract needs exactly this:
+
+```python
+@gl.contract_interface
+class ISourceQuorum:
+    class View:
+        def get_verdict(self, query_id: u256) -> dict: ...
+    class Write:
+        def open_query(self, question: str, urls: list,
+                       min_independent: int, freshness_days: int) -> u256: ...
+        def resolve(self, query_id: u256) -> None: ...
+```
+
+And the verdict is five fields, of which most consumers use two:
+
+```json
+{"status": 1, "conclusive": true, "answer": "Spain",
+ "confidence": 2, "independent_clusters": 3}
+```
+
+`conclusive` is deliberately redundant with `status == 1`. It exists so the correct integration is the *shortest* one to write — a consumer that branches on `conclusive` cannot accidentally treat `CONTRADICTED` as a negative answer, which is the mistake a raw status enum invites.
+
 ### Who would use it
 
-Prediction market resolution · parametric insurance triggers · bounty and grant milestone verification · delisting and depeg detection · KYB/entity-status checks · DAO proposals contingent on external events.
+| Use case | The question |
+|---|---|
+| Prediction market resolution | "Did X happen before date D?" |
+| Parametric insurance | "Did provider P declare an outage on date D?" |
+| Bounty / grant milestones | "Was deliverable D published by team T?" |
+| Delisting & depeg detection | "Did exchange E announce a delisting of token T?" |
+| KYB / entity status | "Is company C currently registered and in good standing?" |
+| Conditional DAO proposals | "Did partner P ship the integration they committed to?" |
 
-They differ only in the question string.
+They differ only in the question string and the source list. **No contract change, no redeploy, no new equivalence principle.** That is the operational meaning of "reusable" — and it is why the same deployment serving all six is more valuable than six deployments serving one each.
+
+### What reuse would look like if this were *not* a primitive
+
+Worth stating the counterfactual, because "reusable" is easy to assert. Without this contract, every one of the six rows above independently implements:
+
+- a multi-source fetch inside a consensus block, with per-source failure handling
+- an equivalence principle that tolerates byte differences but not substantive ones
+- some notion of "enough sources", almost always by counting URLs rather than owners
+- a decision about what to do when sources conflict — usually "take the majority", which is wrong when the majority is one press release
+- defensive parsing of model output
+
+Five of those five are hard to get right and invisible when got wrong. The sixth thing they would each *not* build is a shared source track record, because it is worthless to a single application.
 
 ### The honest limits
 
-- **Not for high-frequency data.** Two consensus rounds plus N live fetches is the wrong tool for anything that moves per-block.
-- **Quality of sources is the caller's job.** The contract enforces *independence*, not *competence*. Four independent conspiracy blogs are four independent clusters. Reputation mitigates this over time; it does not solve it on query one.
-- **Syndication detection is a judgement.** It works well on obvious reprints and is weaker on a rewritten story sourced from the same press release.
+- **Not for high-frequency data.** Two consensus rounds plus N live fetches is the wrong tool for anything that moves per-block. Use a price feed.
+- **Quality of sources is the caller's job.** The contract enforces *independence*, not *competence*. Four independent conspiracy blogs are four independent clusters and will resolve. Reputation mitigates this over many queries; it does nothing on query one. **This is the sharpest limitation and it is structural** — a contract cannot know which publishers are serious without someone telling it, and "someone telling it" is the trusted party the design removes everywhere else.
+- **Syndication detection is a judgement.** It works well on obvious reprints and is weaker on a story rewritten from the same press release with no shared phrasing.
+- **Permalinks age better than index pages.** The World Cup run below used a BBC section front; section fronts change, so a rerun months later may read differently. Callers should prefer stable URLs.
+- **`resolve` is retryable, not guaranteed first-attempt.** An observation round can return `UNDETERMINED`, writing nothing.
 - **Max 8 sources per query**, capped for cost.
 
 ---

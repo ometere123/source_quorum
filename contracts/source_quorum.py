@@ -686,6 +686,24 @@ class SourceQuorum(gl.Contract):
     # ownership grouping, reputation weighting, the quorum floor, and the
     # reputation updates written afterwards. The model is asked what sources
     # say and which are independent -- never what the contract should do.
+    #
+    # The two rounds are split rather than merged into one prompt, for three
+    # reasons:
+    #
+    #   1. Independent readings must not contaminate each other. Round 1 is
+    #      explicitly told not to let one source's content influence how
+    #      another is read. A single call that also decided the verdict would
+    #      be reading each source already knowing what answer it was building
+    #      toward -- the exact bias corroboration exists to remove.
+    #
+    #   2. The rounds need different equivalence principles. One asks whether
+    #      validators agree on what each source *says*; the other asks whether
+    #      they agree on the verdict and the independence structure. A single
+    #      principle would do both jobs badly.
+    #
+    #   3. A deterministic gate sits between them. When too few distinct
+    #      domains were reachable, round 2 never executes, so a doomed query
+    #      costs one consensus round instead of two.
 
     def _gather(
         self, question: str, urls: list[str], freshness_days: int
