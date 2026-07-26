@@ -132,6 +132,34 @@ resolve      guard: exists, still pending                          ← determini
 
 A caller who supplies an impossible source list never reaches a consensus round at all — `open_query` refuses it. A query whose sources are unreachable pays for one round, not two. And a model that returns `RESOLVED` off too few clusters is overruled *after* it has spoken.
 
+### Does the deterministic logic weaken the case for consensus?
+
+It is a fair question — if the quorum is re-checked in ordinary code, why is consensus needed at all? The answer is that **the deterministic logic operates entirely on consensus-agreed data and cannot exist without it.**
+
+Trace what the quorum re-check actually consumes:
+
+```
+independent_clusters = distinct cluster ids among sources that
+        (a) were reachable            ← round 1 consensus output
+        (b) took a position           ← round 1 consensus output
+        (c) grouped into which cluster ← round 2 consensus output
+```
+
+Every input is a consensus output. Delete the consensus rounds and the re-check has nothing to count — no stances, no clusters, no readings. The reputation ledger has the same dependency: a domain's score moves only as a consequence of a verdict that validators agreed on.
+
+So the deterministic code is not an *alternative* to consensus. It is a **constraint on what the consensus output is permitted to do.** Both halves are load-bearing:
+
+| Remove | Result |
+|---|---|
+| The consensus rounds | Nothing to check. No stances, no clusters, no verdict. The contract is inert. |
+| The deterministic logic | The model decides. It can return `RESOLVED` off a single cluster and release an escrow on one page's say-so. |
+
+The Premier League run below shows both halves working together. Consensus established that one domain was reachable and said "Arsenal"; deterministic code established that one domain is not a quorum and discarded the answer. Neither step alone produces the right outcome — the first would have paid out on a single source, the second had nothing to evaluate.
+
+This is also what GenLayer's own guidance asks for — *"design explicit validation and equivalence rules for every LLM, web, image, or other non-deterministic result."* The deterministic gates **are** those rules. A contract with a large non-deterministic surface and no deterministic constraints is not more GenLayer-native; it is less safe. Keeping the non-deterministic surface **small and essential** is the discipline.
+
+One distinction worth being precise about, since there is a real anti-pattern nearby. *"Validators that only check output format"* is a criticism of a weak **equivalence principle**. Nothing here touches the EPs: round 1 still requires validators to agree on every source's reachability and stance and on the substance of each claim; round 2 still requires the same status, cluster structure and confidence band. The deterministic checks run *after* consensus, in contract code. They add a constraint; they remove nothing from the equivalence principle.
+
 ---
 
 ## How it works
