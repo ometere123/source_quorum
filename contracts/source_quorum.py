@@ -942,6 +942,28 @@ class SourceQuorum(gl.Contract):
         for index, finding in enumerate(findings):
             finding["cluster"] = int(clusters[index]) if index < len(clusters) else index
 
+        # Enforce ownership grouping again after adjudication. The adjudicator
+        # may propose separate clusters for two URLs, but two URLs from the same
+        # registrable domain can never become independent evidence. Collapse
+        # same-owner cluster assignments before the quorum count below.
+        owner_domains = []
+        owner_clusters = []
+        for finding in findings:
+            if not finding["reachable"]:
+                continue
+            domain = str(finding["domain"])
+            cluster = int(finding["cluster"])
+            if domain in owner_domains:
+                owner_index = owner_domains.index(domain)
+                canonical = int(owner_clusters[owner_index])
+                if cluster != canonical:
+                    for other in findings:
+                        if int(other.get("cluster", -1)) == cluster:
+                            other["cluster"] = canonical
+            else:
+                owner_domains.append(domain)
+                owner_clusters.append(cluster)
+
         # The quorum floor is re-checked deterministically. The model proposes
         # the clustering; the contract decides whether it clears the bar, so a
         # model cannot talk its way past the minimum.

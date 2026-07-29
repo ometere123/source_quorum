@@ -227,7 +227,7 @@ Neither round could use `strict_eq` — validators fetching the same pages momen
 
 ## Safety properties
 
-**A model cannot talk its way past the quorum.** The floor is re-checked in deterministic code after clustering. A `RESOLVED` verdict with fewer independent clusters than required is downgraded to `INSUFFICIENT` and its answer discarded.
+**A model cannot talk its way past the quorum.** The floor is re-checked in deterministic code after clustering. A `RESOLVED` verdict with fewer independent clusters than required is downgraded to `INSUFFICIENT` and its answer discarded. Same-owner domains are also merged again before counting, so two URLs from one publisher cannot satisfy two independent clusters even if adjudication assigns different cluster ids.
 
 **An unreadable page has no stance.** If a source failed to fetch, its stance is forced to `UNCLEAR` no matter what the model reports.
 
@@ -374,7 +374,7 @@ gltest tests/integration/ -v -s --network studionet
 
 ### Test coverage
 
-30 direct tests. The adversarial cases are the point.
+33 direct tests. The adversarial cases are the point.
 
 | Area | Cases |
 |---|---|
@@ -405,18 +405,21 @@ tests/conftest.py                 host workarounds only
 
 ## Status
 
-Lint clean. **30 direct tests pass. 2 integration tests pass against real StudioNet consensus**, including a full-surface run driving all 3 writes and reading all 7 views.
+Lint clean. **33 direct tests pass.** The earlier full-surface StudioNet integration run covered all 3 writes and all 7 views; the Jul 29 review fix was redeployed to StudioNet and smoke-checked with schema plus `query_count()`.
+
+Review fix, Jul 29 2026: the final quorum check now deterministically merges same-domain cluster assignments before counting independent clusters. This closes the case where an adjudication output could place two URLs from one publisher into different cluster ids and make one publisher look like a quorum. The regression test is `test_same_domain_clusters_are_merged_before_quorum_count`.
 
 ### Deployed
 
 | | |
 |---|---|
 | Network | StudioNet (chain id 61999) |
-| Address | `0xc9fCE280384A1B3D2CE03d2CB6f6344d36e205A2` |
-| Studio | https://studio.genlayer.com/?import-contract=0xc9fCE280384A1B3D2CE03d2CB6f6344d36e205A2 |
-| Explorer | https://explorer-studio.genlayer.com/address/0xc9fCE280384A1B3D2CE03d2CB6f6344d36e205A2 |
+| Address | `0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720` |
+| Deploy tx | `0xe105bd0715dcab2e444f4de26bd11add08f40c5b1e99933681d9d5475f319de9` |
+| Studio | https://studio.genlayer.com/?import-contract=0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 |
+| Explorer | https://explorer-studio.genlayer.com/address/0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 |
 
-All 3 write methods have been executed against this deployment, so the explorer shows the complete surface: `open_query` ×3, `resolve` ×2, `cancel_query`.
+The patched deployment was schema-checked and smoke-tested with `query_count() == 0`. The previous StudioNet deployment exercised the complete write surface: `open_query`, `resolve`, and `cancel_query`.
 
 ### Measured on live consensus
 

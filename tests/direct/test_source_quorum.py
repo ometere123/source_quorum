@@ -219,6 +219,47 @@ def test_a_model_cannot_resolve_below_the_quorum_floor(direct_vm, direct_deploy)
     assert contract.get_query(query_id)["answer"] == ""
 
 
+def test_same_domain_clusters_are_merged_before_quorum_count(
+    direct_vm, direct_deploy
+):
+    """A publisher cannot become two independent clusters after adjudication.
+
+    `open_query` allows this source list because it spans two owners, but only
+    the alpha-owned URLs take a position. If the model assigns those two alpha
+    URLs to different cluster ids, deterministic post-processing must merge
+    them before counting the quorum.
+    """
+    contract = direct_deploy(CONTRACT)
+    query_id = opened(
+        contract,
+        urls=[U_ALPHA, U_ALPHA_MIRROR, U_BETA],
+        min_independent=2,
+    )
+
+    mock_all_web(direct_vm)
+    direct_vm.mock_llm(
+        GATHER_PROMPT,
+        gather(
+            (U_ALPHA, True, "SUPPORTS", "2026-07-14"),
+            (U_ALPHA_MIRROR, True, "SUPPORTS", "2026-07-14"),
+            (U_BETA, True, "UNCLEAR", ""),
+        ),
+    )
+    direct_vm.mock_llm(JUDGE_PROMPT, judge([0, 1, 2], "RESOLVED"))
+    contract.resolve(query_id)
+
+    verdict = contract.get_verdict(query_id)
+    findings = contract.get_findings(query_id)
+
+    assert verdict["conclusive"] is False
+    assert verdict["status"] == 3, "same owner cannot satisfy two clusters"
+    assert verdict["independent_clusters"] == 1
+    alpha_clusters = {
+        f["cluster"] for f in findings if f["domain"] == "alpha-news.com"
+    }
+    assert alpha_clusters == {0}
+
+
 def test_conflicting_sources_return_contradicted_not_a_guess(
     direct_vm, direct_deploy
 ):
