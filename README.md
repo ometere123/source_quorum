@@ -290,6 +290,109 @@ And the verdict is five fields, of which most consumers use two:
 
 `conclusive` is deliberately redundant with `status == 1`. It exists so the correct integration is the *shortest* one to write — a consumer that branches on `conclusive` cannot accidentally treat `CONTRADICTED` as a negative answer, which is the mistake a raw status enum invites.
 
+### How to use the deployed primitive
+
+Use the deployed SourceQuorum address when you want the shared reputation ledger:
+
+```text
+0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720
+```
+
+The direct flow is:
+
+```text
+open_query -> resolve -> get_verdict
+```
+
+Open a query with the fact to verify, the source URLs, the minimum number of independent source clusters required, and a freshness window:
+
+```bash
+genlayer write 0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 open_query \
+  --args "Is Python a programming language?" \
+  '["https://www.python.org/about/","https://en.wikipedia.org/wiki/Python_(programming_language)","https://www.britannica.com/technology/Python-computer-language"]' \
+  2 \
+  3650
+```
+
+That returns a `query_id`. Anyone can then pay to resolve it:
+
+```bash
+genlayer write 0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 resolve --args 5
+```
+
+Read the verdict:
+
+```bash
+genlayer call 0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 get_verdict --args 5
+```
+
+Example output:
+
+```json
+{"answer": "Python is a programming language.",
+ "conclusive": true,
+ "confidence": 2,
+ "independent_clusters": 2,
+ "status": 1}
+```
+
+For a downstream contract, the safe rule is:
+
+```python
+verdict = ISourceQuorum(self.quorum).view().get_verdict(query_id)
+if bool(verdict["conclusive"]):
+    # act on verdict["answer"]
+else:
+    # do not settle; the fact was not proven
+```
+
+Do not treat `CONTRADICTED`, `INSUFFICIENT`, `UNAVAILABLE`, or `CANCELLED` as negative answers. They mean the contract did not have enough independent corroboration to prove the fact.
+
+### How another contract uses it
+
+The worked consumer is [`examples/corroborated_payout.py`](examples/corroborated_payout.py). It is an escrow that pays only when SourceQuorum returns a conclusive, confident verdict.
+
+Deploy the consumer with the SourceQuorum address and a payee:
+
+```bash
+genlayer deploy \
+  --contract examples/corroborated_payout.py \
+  --args 0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 0xb29Ead15B1E8A2420faE84de974088f67a15ccC2
+```
+
+There are two reuse modes.
+
+Mode 1: use an existing SourceQuorum query.
+
+```text
+SourceQuorum.open_query(...) -> query_id
+CorroboratedPayout.arm(query_id)
+SourceQuorum.resolve(query_id)
+CorroboratedPayout.settle()
+```
+
+Mode 2: have the consumer contract write into SourceQuorum.
+
+```bash
+genlayer write 0x4257362C8C92F3DFf407dE53526BCc513ABFAd0E request_quorum_query \
+  --args "Did this query originate from the CorroboratedPayout consumer contract?" \
+  '["https://example.com","https://www.iana.org/help/example-domains"]' \
+  2 \
+  3650
+```
+
+That emits `open_query(...)` from the consumer to SourceQuorum. The main contract records the consumer contract as the asker, so usage shows up on the SourceQuorum explorer page too.
+
+The deployed example proves this path:
+
+```text
+consumer tx   0xe20325163e4e33ff0dd304f719ee71c0d5e32f7fc2de7f332db8b0998de7ab2c
+triggered tx  0x1a6d7730643c23eb36dd6c4206b4b9b30b8f17bc5dcb8e6934cd8620f0541e5a
+asker         0x4257362C8C92F3DFf407dE53526BCc513ABFAd0E
+```
+
+This is the intended reuse pattern: other contracts and full applications can point at one SourceQuorum deployment instead of redeploying their own multi-source oracle. Their usage contributes to the same source reputation ledger.
+
 ### Who would use it
 
 | Use case | The question |
