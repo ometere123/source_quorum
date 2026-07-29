@@ -134,6 +134,29 @@ class CorroboratedPayout(gl.Contract):
     # instead of silently joining the pot.
 
     @gl.public.write
+    def request_quorum_query(
+        self,
+        question: str,
+        urls: list,
+        min_independent: int,
+        freshness_days: int,
+    ) -> None:
+        """Ask the shared SourceQuorum deployment to open a query.
+
+        This is included to demonstrate contract-to-contract reuse that writes
+        to the primitive itself. The emitted call creates the query on
+        SourceQuorum, so the main contract's explorer page records usage that
+        originated from this consumer.
+        """
+
+        if gl.message.sender_address != self.payer:
+            raise gl.vm.UserError(f"{ERR_EXPECTED}: caller is not the payer")
+
+        ISourceQuorum(self.quorum).emit(on="accepted").open_query(
+            question, urls, min_independent, freshness_days
+        )
+
+    @gl.public.write
     def arm(self, query_id: u256) -> None:
         """Bind this escrow to a query already opened on the quorum contract.
 

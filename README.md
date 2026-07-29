@@ -405,7 +405,7 @@ tests/conftest.py                 host workarounds only
 
 ## Status
 
-Lint clean. **33 direct tests pass.** The earlier full-surface StudioNet integration run covered all 3 writes and all 7 views; the Jul 29 review fix was redeployed to StudioNet and smoke-checked with schema plus `query_count()`.
+Lint clean. **Direct tests pass.** The earlier full-surface StudioNet integration run covered all 3 writes and all 7 views; the Jul 29 review fix was redeployed to StudioNet and exercised with live writes.
 
 Review fix, Jul 29 2026: the final quorum check now deterministically merges same-domain cluster assignments before counting independent clusters. This closes the case where an adjudication output could place two URLs from one publisher into different cluster ids and make one publisher look like a quorum. The regression test is `test_same_domain_clusters_are_merged_before_quorum_count`.
 
@@ -414,94 +414,93 @@ Review fix, Jul 29 2026: the final quorum check now deterministically merges sam
 | | |
 |---|---|
 | Network | StudioNet (chain id 61999) |
-| Address | `0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720` |
+| SourceQuorum address | `0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720` |
 | Deploy tx | `0xe105bd0715dcab2e444f4de26bd11add08f40c5b1e99933681d9d5475f319de9` |
 | Studio | https://studio.genlayer.com/?import-contract=0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 |
 | Explorer | https://explorer-studio.genlayer.com/address/0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 |
 
-The patched deployment was schema-checked and smoke-tested with `query_count() == 0`. The previous StudioNet deployment exercised the complete write surface: `open_query`, `resolve`, and `cancel_query`.
+### Worked consumer deployed
+
+[`examples/corroborated_payout.py`](examples/corroborated_payout.py) is deployed as a consumer of the shared primitive.
+
+| | |
+|---|---|
+| Consumer address | `0x4257362C8C92F3DFf407dE53526BCc513ABFAd0E` |
+| Deploy tx | `0x567087a444c203bb608c20dd89e2221c74e78c59c8a409449b0365b1a57f3636` |
+| Explorer | https://explorer-studio.genlayer.com/address/0x4257362C8C92F3DFf407dE53526BCc513ABFAd0E |
+
+The consumer can reuse SourceQuorum in both ways:
+
+- read an existing verdict with `get_verdict(query_id)` before settling a payout
+- write into the shared primitive with `request_quorum_query(...)`, which emits `open_query(...)` to the SourceQuorum address
+
+That second path is visible on-chain. The consumer transaction `0xe20325163e4e33ff0dd304f719ee71c0d5e32f7fc2de7f332db8b0998de7ab2c` triggered SourceQuorum transaction `0x1a6d7730643c23eb36dd6c4206b4b9b30b8f17bc5dcb8e6934cd8620f0541e5a`. Query 4 on SourceQuorum records its `asker` as the consumer contract address:
+
+```json
+{"query_id": 4,
+ "asker": "0x4257362C8C92F3DFf407dE53526BCc513ABFAd0E",
+ "status_name": "PENDING"}
+```
 
 ### Measured on live consensus
 
-**A real-world fact, three independently-owned sources.**
+The current StudioNet deployment has exercised the full write surface: `open_query`, `resolve`, and `cancel_query`. The writes all finalized successfully; the verdict outputs differ by design.
 
-Question: *"Which national team won the 2026 FIFA World Cup?"*
-Sources: `en.wikipedia.org`, `bbc.com`, `apnews.com`.
+| Query | Action | Tx | Output |
+|---|---|---|---|
+| 2 | `open_query` | `0x19d74649c846f7fe856005b86486022faf1c764b180a3c9456f8667d9daadbc4` | opened |
+| 2 | `resolve` | `0x5111002ce2086314b8b6680fc8ca6f55c8492687937da018f0c68f30a0170b18` | `UNAVAILABLE`, not conclusive |
+| 3 | `open_query` | `0xba37262db5a697f3697a708b2729ccb0642827100d47ac1b2b661a34d2665cad` | opened |
+| 3 | `cancel_query` | `0x24770a3fc137d3860251a66a60b8d26ca846b7fbe87c2fbd86162ea9b71fded8` | `CANCELLED`, not conclusive |
+| 4 | `open_query` from consumer | `0x1a6d7730643c23eb36dd6c4206b4b9b30b8f17bc5dcb8e6934cd8620f0541e5a` | opened by `CorroboratedPayout` |
+| 5 | `open_query` | created at `2026-07-29T11:53:54Z` | opened |
+| 5 | `resolve` | `0x40d6dd5ff2cefe30bded94a5c6f1e6fb54b709b1f0724dc13afce809a40173d3` | `RESOLVED`, conclusive |
+
+Positive resolution:
 
 ```json
-{"status_name": "RESOLVED", "answer": "Spain",
- "independent_clusters": 3, "confidence": 2}
+{"answer": "Python is a programming language.",
+ "conclusive": true,
+ "confidence": 2,
+ "independent_clusters": 2,
+ "status": 1}
 ```
 
-Per-source findings, with excerpts the validators pulled from the live pages:
-
-| domain | stance | claim | cluster | excerpt |
-|---|---|---|---|---|
-| `wikipedia.org` | SUPPORTS | Spain | 0 | "…concluded on July 19 with Spain winning the championship for the second time." |
-| `bbc.com` | SUPPORTS | Spain | 1 | "'A date with history and we got there first' - Spain react to World Cup win." |
-| `apnews.com` | SUPPORTS | Spain | 2 | "Spain wins the World Cup by beating Argentina 1-0 on Ferran Torres' goal in extra time" |
-
-Note what the clustering got right: three *materially different* reports of the
-same event — an encyclopedia summary, a reaction piece and a match report —
-were correctly held to be three independent clusters rather than one
-syndicated story. The adjudicator's own reasoning:
-
-> "Wikipedia, BBC, and AP News are separate publishers and there is no
-> indication here that the BBC and AP items are reprints of the same wire copy
-> or that either merely reproduces the other."
-
-All three domains moved 5000 → 5250 bps in the reputation ledger.
-
-**Refusing to answer when it has the answer.**
-
-The property worth testing hardest is abstention. Question: *"Which club won the 2025-26 English Premier League title?"* over three sources, two of which are dead domains.
+Unavailability:
 
 ```json
-{"status_name": "UNAVAILABLE", "answer": "", "confidence": 0,
+{"answer": "",
+ "conclusive": false,
+ "confidence": 0,
  "independent_clusters": 0,
- "reasoning": "only 1 distinct domains were reachable, below min_independent=2"}
+ "status": 4}
 ```
 
-| domain | reachable | stance | claim |
-|---|---|---|---|
-| `this-domain-does-not-exist-91af.example` | false | UNCLEAR | — |
-| `wikipedia.org` | **true** | **SUPPORTS** | **Arsenal** |
-| `nonexistent-sports-site-7731.test` | false | UNCLEAR | — |
-
-**Wikipedia answered the question — and the contract discarded it.** One reachable domain is not corroboration, so the verdict is `UNAVAILABLE` with an empty answer rather than a confident "Arsenal" backed by a single page. This is the whole design in one transaction: an oracle that must produce a value would have returned Arsenal here.
-
-Note also what did *not* happen. Round 2 never ran: the deterministic reachability floor short-circuited before adjudication, so a doomed query costs one consensus round rather than two. The two dead domains each took the −100 bps unreachable penalty (5000 → 4900), while `wikipedia.org` was neither rewarded nor punished — an inconclusive query moves nothing.
-
-**A second question, on stable reference pages.**
-
-Question: *"Is the example.com domain reserved for use in documentation and examples without needing permission?"*
-Sources: `example.com` and `iana.org` — two distinct owners.
+Cancellation:
 
 ```json
-{"status_name": "RESOLVED", "independent_clusters": 2, "confidence": 2,
- "answer": "Yes, the example.com domain is reserved for use in documentation
-            and examples without needing permission."}
+{"answer": "",
+ "conclusive": false,
+ "confidence": 0,
+ "independent_clusters": 0,
+ "status": 5}
 ```
 
-Per-source findings, with excerpts the validators actually pulled from the live pages:
+Consumer settlement against the cancelled query:
 
-| domain | stance | cluster | excerpt |
-|---|---|---|---|
-| `example.com` | SUPPORTS | 0 | "This domain is for use in documentation examples without needing permission." |
-| `iana.org` | SUPPORTS | 1 | "These domains may be used as illustrative examples in documents without prior coordination with us." |
-
-Both domains moved 5000 → 5250 bps in the reputation ledger, `times_aligned = 1`.
-
-**Stance reproducibility.** The same question resolved twice, independently, produced identical per-source stances. This is the convergence property the primitive rests on: if two resolutions disagreed about what a source says, corroboration counts would be noise.
-
-```
-run 1: [(example.com, SUPPORTS), (iana.org, SUPPORTS)]
-run 2: [(example.com, SUPPORTS), (iana.org, SUPPORTS)]
+```json
+{"armed": true,
+ "query_id": 3,
+ "settled": true,
+ "paid": false,
+ "status": 5,
+ "clusters": 0,
+ "answer": ""}
 ```
 
 ### Observed consensus behaviour
 
-Individual validator votes routinely include `DISAGREE` and `IDLE`; transactions still reach `ACCEPTED` on quorum. An observation round can also return `UNDETERMINED`, in which case **nothing is written** and the call must be retried. Treat `resolve` as retryable. `open_query` and `cancel_query` are deterministic and do not have this behaviour.
+Individual validator votes can include `IDLE`; transactions still reach `ACCEPTED` on quorum. An observation round can also return `UNDETERMINED`, in which case **nothing is written** and the call must be retried. Treat `resolve` as retryable. `open_query` and `cancel_query` are deterministic and do not have this behaviour.
 
 ### Roadmap
 
