@@ -512,15 +512,16 @@ Lint clean. **Direct tests pass.** The earlier full-surface StudioNet integratio
 
 Review fix, Jul 29 2026: the final quorum check now deterministically merges same-domain cluster assignments before counting independent clusters. This closes the case where an adjudication output could place two URLs from one publisher into different cluster ids and make one publisher look like a quorum. The regression test is `test_same_domain_clusters_are_merged_before_quorum_count`.
 
+Redeploy, Jul 31 2026: a review pass found the previously-linked Explorer address had drifted from this fix. Redeployed current `main` (unchanged source, same merge logic) to a fresh address below and reverified the merge live — see [REVIEW_RESPONSE.md](REVIEW_RESPONSE.md) for the on-chain evidence. This is now the canonical deployment; treat any older SourceQuorum address as stale.
+
 ### Deployed
 
 | | |
 |---|---|
 | Network | StudioNet (chain id 61999) |
-| SourceQuorum address | `0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720` |
-| Deploy tx | `0xe105bd0715dcab2e444f4de26bd11add08f40c5b1e99933681d9d5475f319de9` |
-| Studio | https://studio.genlayer.com/?import-contract=0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 |
-| Explorer | https://explorer-studio.genlayer.com/address/0x78B847ea74BA67a487abCD07942Ea5fF8DfC6720 |
+| SourceQuorum address | `0x02749e67A31c943f2700C2823E3500bcd2312599` |
+| Studio | https://studio.genlayer.com/?import-contract=0x02749e67A31c943f2700C2823E3500bcd2312599 |
+| Explorer | https://explorer-studio.genlayer.com/address/0x02749e67A31c943f2700C2823E3500bcd2312599 |
 
 ### Worked consumer deployed
 
@@ -528,16 +529,15 @@ Review fix, Jul 29 2026: the final quorum check now deterministically merges sam
 
 | | |
 |---|---|
-| Consumer address | `0x4257362C8C92F3DFf407dE53526BCc513ABFAd0E` |
-| Deploy tx | `0x567087a444c203bb608c20dd89e2221c74e78c59c8a409449b0365b1a57f3636` |
-| Explorer | https://explorer-studio.genlayer.com/address/0x4257362C8C92F3DFf407dE53526BCc513ABFAd0E |
+| Consumer address | `0xCD39236439Dc6e4d32fec682846E8DB198a5665C` |
+| Explorer | https://explorer-studio.genlayer.com/address/0xCD39236439Dc6e4d32fec682846E8DB198a5665C |
 
 The consumer can reuse SourceQuorum in both ways:
 
 - read an existing verdict with `get_verdict(query_id)` before settling a payout
 - write into the shared primitive with `request_quorum_query(...)`, which emits `open_query(...)` to the SourceQuorum address
 
-That second path is visible on-chain. The consumer transaction `0xe20325163e4e33ff0dd304f719ee71c0d5e32f7fc2de7f332db8b0998de7ab2c` triggered SourceQuorum transaction `0x1a6d7730643c23eb36dd6c4206b4b9b30b8f17bc5dcb8e6934cd8620f0541e5a`. Query 4 on SourceQuorum records its `asker` as the consumer contract address:
+That second path is visible on-chain. The consumer transaction `0xe20325163e4e33ff0dd304f719ee71c0d5e32f7fc2de7f332db8b0998de7ab2c` triggered SourceQuorum transaction `0x1a6d7730643c23eb36dd6c4206b4b9b30b8f17bc5dcb8e6934cd8620f0541e5a`. Query 4 on SourceQuorum records its `asker` as the consumer contract address (this transcript is from the prior deployment; the underlying `request_quorum_query` -> `open_query` mechanism is unchanged on the current address above):
 
 ```json
 {"query_id": 4,
@@ -545,9 +545,21 @@ That second path is visible on-chain. The consumer transaction `0xe20325163e4e33
  "status_name": "PENDING"}
 ```
 
-### Measured on live consensus
+### Same-domain merge, verified on the current deployment
 
-The current StudioNet deployment has exercised the full write surface: `open_query`, `resolve`, and `cancel_query`. The writes all finalized successfully; the verdict outputs differ by design.
+Query 1 on the current address (`0x02749e67A31c943f2700C2823E3500bcd2312599`) probed two URLs on `example.com` plus one on `iana.org`, `min_independent=2`. `get_findings()` after `resolve()`:
+
+| url | domain | cluster |
+|---|---|---|
+| `https://example.com/` | `example.com` | `0` |
+| `https://example.com/?ref=alt` | `example.com` | `0` |
+| `https://www.iana.org/help/example-domains` | `iana.org` | `1` |
+
+Both `example.com` URLs merged into cluster `0`. `get_verdict()` reports `independent_clusters: 2`, not 3 — the deployed contract is applying the same-domain merge, live. See [REVIEW_RESPONSE.md](REVIEW_RESPONSE.md) for the full writeup.
+
+### Measured on live consensus (prior deployment)
+
+The transcript below is from the previous StudioNet address and predates the redeploy above; it demonstrates the full write surface (`open_query`, `resolve`, `cancel_query`) and is kept for reference. The writes all finalized successfully; the verdict outputs differ by design.
 
 | Query | Action | Tx | Output |
 |---|---|---|---|
